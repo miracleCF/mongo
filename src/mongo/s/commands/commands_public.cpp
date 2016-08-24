@@ -62,6 +62,7 @@
 #include "mongo/scripting/engine.h"
 #include "mongo/util/log.h"
 #include "mongo/util/timer.h"
+#include "mongo/s/rtree/rtree_globle.h"
 
 namespace mongo {
 
@@ -241,7 +242,500 @@ public:
 };
 
 // ----
+/**
+ *Non query cmds are defined here
+ *Such as registerGeomerty
+ *CreateRtreeIndex
+ */
+class CmdRegisterGeometry :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdRegisterGeometry);
+public:
+    CmdRegisterGeometry() :
+        Command("registerGeometry"){
+    }
 
+    bool run(OperationContext* txn,
+            const string& dbname,
+            BSONObj& cmdObj,
+            int options,
+            string& errmsg,
+            BSONObjBuilder& result) {
+        int stat=0;
+        try {
+             log()<<"cmd:"<<cmdObj<<"    -- TTTTO test driver>>>>>>>>>>>>>>>>>>";
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+            double gtype=0;
+            if (cmdObj.hasField("gtype"))
+               gtype = cmdObj["gtype"].numberInt();
+            double srid=4326;
+            if (cmdObj.hasField("srid"))
+               srid = cmdObj["srid"].numberInt();
+            double crstype=0;
+            if (cmdObj.hasField("crstype"))
+               crstype = cmdObj["crstype"].numberInt();
+            double torrance=0;
+            if (cmdObj.hasField("torrance"))
+               torrance = cmdObj["torrance"].Double();
+   
+            if (cmdObj.hasField("field"))
+                stat = IM.RegisterGeometry(txn,dbname, cmdObj["collectionName"].str(), cmdObj["field"].str(), gtype,srid, crstype, torrance);
+            else
+                errmsg = "Please type the field you want to build an index on";
+        }
+        catch (DBException& e) {
+            int code = e.getCode();
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errmsg = ss.str();
+            result.append("code", code);
+        }
+        if (-1 == stat)
+            errmsg = "This geomrtry field has been registered.";
+        if (-2 == stat)
+            errmsg = "illegal gtype,it should be 0 -7.";
+        if (-3 == stat)
+            errmsg = "Torrance must be greater than 0";
+        if (-4 == stat)
+            errmsg = "crstype must be 0, 1 or 2";
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+
+    // Slaves can't perform writes.
+    bool slaveOk() const { return false; }
+
+   // Safer as off by default, can slowly enable as we add more tests
+    virtual bool passOptions() const {
+        return false;
+    }
+
+    // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}registerGeometryCmd;
+
+class CmdInsertIndexedDoc :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdInsertIndexedDoc);
+public:
+    CmdInsertIndexedDoc() :
+        Command("insertIndexedDoc"){
+    }
+
+    bool run(OperationContext* txn,
+        const string& dbName,
+        BSONObj& cmdObj,
+        int options,
+        string& errMsg,
+        BSONObjBuilder& result) {
+
+        int stat=0;
+        try {
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+
+            BSONElement e = cmdObj.firstElement();
+            std::string collname = e.String();
+            int ncount = cmdObj["documents"].Array().size();
+            for (int i = 0; i < ncount; i++)
+            {
+                stat = IM.InsertIndexedDoc(txn,dbName, collname, cmdObj["documents"].Array()[i].Obj(), result);
+            }
+        }
+        catch (DBException& e) {
+            int code = e.getCode();
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errMsg = ss.str();
+            result.append("code", code);
+        }
+        if (-1 == stat)
+            errMsg = "something wrong with rtree index please rebuild it.";
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+
+    // Slaves can't perform writes.
+    bool slaveOk() const { return false; }
+    
+     // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}insertIndexedDocCmd;
+
+class CmdDeleteContainedGeoObj :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdDeleteContainedGeoObj);
+public:
+    CmdDeleteContainedGeoObj() :
+        Command("deleteContainedGeoObj"){
+    }
+
+    bool run(OperationContext* txn,
+        const string& dbName,
+        BSONObj& cmdObj,
+        int options,
+        string& errMsg,
+        BSONObjBuilder& result) {
+
+        std::string errmsg;
+        int stat;
+        try {
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+
+            string collection = cmdObj["collection"].str();
+            // log()<<"delete collection:"<<collection;
+            BSONObj condition = cmdObj["condition"].Obj();
+            // log()<<"delete condition:"<<condition;
+            stat = IM.DeleteContainedGeoObj(txn,dbName,collection,condition);
+        }
+        catch (DBException& e) {
+            int code = e.getCode();
+
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errMsg = ss.str();
+            result.append("code", code);
+        }
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+
+    // Slaves can't perform writes.
+    bool slaveOk() const { return false; }
+
+    // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}deleteContainedGeoObjCmd;
+
+class CmdgeoWithinSearch :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdgeoWithinSearch);
+private:
+    RTreeRangeQueryCursor returnCursor;
+public:
+    CmdgeoWithinSearch() :
+        Command("geoWithinSearch"){
+    }
+
+    bool run(OperationContext* txn,
+        const string& dbName,
+        BSONObj& cmdObj,
+        int options,
+        string& errMsg,
+        BSONObjBuilder& result) {
+
+        int stat;
+        try {
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+                
+            string collection = cmdObj["collection"].str();
+            // returnCursor= IM.GeoSearchWithin(txn,dbName,collection,cmdObj["condition"].Obj());
+            // RTreeCursor<OID> returnCursor = IM.GeoSearchWithin(txn,dbName,collection,cmdObj["condition"].Obj());
+            // int key_count = returnCursor.Count();
+            // log()<<"numbers of OID"<<key_count;
+            // Command* c = Command::findCommand("find");
+            // BSONObjBuilder query;
+            // BSONObjBuilder filter;
+            // BSONArrayBuilder query_criteria;
+            // for (int i = 0; i < key_count; i++)
+            // {
+            //     query_criteria.append(returnCursor.allKeys[i]);
+            // }
+            // BSONObjBuilder in_query;
+            // in_query.append("$in",query_criteria.arr());
+            // filter.append("_id",in_query.obj());
+            // query.append("find",collection);
+            // query.append("filter",filter.obj());
+            // BSONObj show_query = query.obj();
+            // log()<<"at the very last, show the query:"<<show_query;
+            // string ns = dbName+"."+collection;
+            // log()<<"check collection name in CmdgeoWithinSearch:"<< ns; 
+            // execCommandClientBasic(txn, c, cc(), options, ns.c_str(), show_query, result);
+        }
+        catch (DBException& e) {
+            stat = -1;
+            int code = e.getCode();
+
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errMsg = ss.str();
+            result.append("code", code);
+        }
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+
+    int rtreeDataMore(int nCount,std::queue<BSONObj>& results)
+    {
+        //log()<<"jinrule datamore"<<endl;
+        if(nCount<1)
+          return 0;
+        for(int i = 0;i<nCount;i++)
+        {
+            //log()<<"will insert data-com"<<endl;
+            BSONObj obj = returnCursor.Next();
+            if(obj.isEmpty())
+               break;
+            results.push(obj);
+        }
+        return results.size();
+    }
+    
+    void freeCursor() 
+    {
+        returnCursor.FreeCursor();
+    }
+    
+    // Slaves can't perform writes.
+    bool slaveOk() const { return false; }
+    
+     // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}geoWithinSearchCmd;
+
+class CmdgeoIntersectSearch :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdgeoIntersectSearch);
+private:
+    RTreeRangeQueryCursor returnCursor;
+public:
+    CmdgeoIntersectSearch() :
+        Command("geoIntersectSearch"){
+    }
+
+    bool run(OperationContext* txn,
+        const string& dbName,
+        BSONObj& cmdObj,
+        int options,
+        string& errMsg,
+        BSONObjBuilder& result) {
+
+        int stat;
+        try {
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+                
+            string collection = cmdObj["collection"].str();
+           /*
+            * The type of return has changed 
+            * fetch the BSONobj throngh using the Next()
+            * judge whether more is existing by using IsEmpty
+            */
+            
+            // returnCursor=IM.GeoSearchIntersects(txn,dbName,collection,cmdObj["condition"].Obj());
+
+        }
+        catch (DBException& e) {
+            stat = -1;
+            int code = e.getCode();
+
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errMsg = ss.str();
+            result.append("code", code);
+        }
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+    
+    int rtreeDataMore(int nCount,std::queue<BSONObj>& results)
+    {
+        log()<<"jinrule datamore"<<endl;
+        if(nCount<1)
+          return 0;
+        for(int i = 0;i<nCount;i++)
+        {
+            //log()<<"会插进去数据-com"<<endl;
+            BSONObj obj = returnCursor.Next();
+            if(obj.isEmpty())
+               break;
+            results.push(obj);
+        }
+        return results.size();
+    }
+    void freeCursor() 
+    {
+        returnCursor.FreeCursor();
+    }
+    // Slaves can't perform writes.
+    bool slaveOk() const { return false; }
+    
+     // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}geoIntersectSearchCmd;
+class CmdgeoNearSearch :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdgeoNearSearch);
+private:
+    RTreeGeoNearCurosr returnCursor;
+public:
+    CmdgeoNearSearch() :
+        Command("geoNearSearch"){
+    }
+
+    bool run(OperationContext* txn,
+        const string& dbName,
+        BSONObj& cmdObj,
+        int options,
+        string& errMsg,
+        BSONObjBuilder& result) {
+
+        int stat;
+        try {
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+                
+            // string collection = cmdObj["collection"].str();
+            // BSONObj condition = cmdObj["condition"].Obj();
+            // double center_x = condition["coordinates"].Array()[0].numberDouble();
+            // double center_y = condition["coordinates"].Array()[1].numberDouble();
+
+            // double maxDistance= condition["$maxDistance"].numberDouble();
+            // double minDistance = condition["$minDistance"].numberDouble();
+            // log()<<"maxDistance:"<<maxDistance;
+            // log()<<"minDistance:"<<minDistance;
+           
+            // returnCursor = IM.GeoSearchNear(txn,dbName,collection,center_x,center_y,minDistance,maxDistance);
+            // RTreeCursor<OID> returnCursor = IM.GeoSearchNear(txn,dbName,collection,center_x,center_y,minDistance,maxDistance);
+            // int key_count = returnCursor.Count();
+            // log()<<"numbers of OID"<<key_count;
+            // Command* c = Command::findCommand("find");
+            // BSONObjBuilder query;
+            // BSONObjBuilder filter;
+            // BSONArrayBuilder query_criteria;
+            // for (int i = 0; i < key_count; i++)
+            // {
+            //     query_criteria.append(returnCursor.allKeys[i]);
+            // }
+            // BSONObjBuilder in_query;
+            // in_query.append("$in",query_criteria.arr());
+            // filter.append("_id",in_query.obj());
+            // query.append("find",collection);
+            // query.append("filter",filter.obj());
+            // BSONObj show_query = query.obj();
+            // log()<<"at the very last, show the query:"<<show_query;
+            // string ns = dbName+"."+collection;
+            // execCommandClientBasic(txn, c, cc(), options, ns.c_str(), show_query, result);
+        }
+        catch (DBException& e) {
+            stat = -1;
+            int code = e.getCode();
+
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errMsg = ss.str();
+            result.append("code", code);
+        }
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+
+    int rtreeDataMore(int nCount,std::queue<BSONObj>& results)
+    {
+        // log()<<"jinrule datamore"<<endl;
+        if(nCount<1)
+          return 0;
+        for(int i = 0;i<nCount;i++)
+        {
+            BSONObj obj = returnCursor.Next();
+            if(obj.isEmpty())
+               break;
+            results.push(obj);
+            // log()<<"will insert data-geonearcommand"<<endl;
+        }
+        return results.size();
+    }
+   
+    void freeCursor() 
+    {
+        returnCursor.FreeCursor();
+    }
+    // Slaves can't perform writes.
+    bool slaveOk() const { return false; }
+    
+     // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}geoNearSearchCmd;
+/*
+class CmdDeleteGeoByID :public Command
+{
+    MONGO_DISALLOW_COPYING(CmdDeleteGeoByID);
+public:
+    CmdDeleteGeoByID() :
+        Command("deleteGeoByID"){
+    }
+
+    bool CmdDeleteGeoByID::run(OperationContext* txn,
+        const string& dbName,
+        BSONObj& cmdObj,
+        int options,
+        string& errMsg,
+        BSONObjBuilder& result) {
+        int stat;
+        try {
+            if (!pIndexManagerIO->IsConnected())
+                pIndexManagerIO->connectMyself();
+            if (!pRTreeIO->IsConnected())
+                pRTreeIO->connectMyself();
+
+            BSONElement e = cmdObj.firstElement();
+            std::string collname = e.String();
+            BSONObj deleteObj = cmdObj["deletes"].Array()[0].Obj();
+            BSONObj queryObj = deleteObj["q"].Obj();
+            log() << "OID:" << OID(queryObj["id"].str()) << endl;
+            stat = IM.DeleteGeoObjByKey(txn,dbName, collname, OID(queryObj["id"].str()));
+
+            //ok = c->run(dbName, insertObj.obj(), 0, errmsg, builder, false);//执行咯
+        }
+        catch (DBException& e) {
+            stat = -1;
+            //int code = e.getCode();
+
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errMsg = ss.str();
+            result.append("errMsg", errMsg);
+        }
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+    }
+
+    // Slaves can't perform writes.
+    bool CmdDeleteGeoByID::slaveOk() const { return false; }
+
+   // all grid commands are designed not to lock
+    virtual bool isWriteCommandForConfigServer() const {
+        return false;
+    }
+}deleteGeoByIDCmd;
+*/
 class DropIndexesCmd : public AllShardsCollectionCommand {
 public:
     DropIndexesCmd() : AllShardsCollectionCommand("dropIndexes", "deleteIndexes") {}
@@ -251,6 +745,41 @@ public:
         ActionSet actions;
         actions.addAction(ActionType::dropIndex);
         out->push_back(Privilege(parseResourcePattern(dbname, cmdObj), actions));
+    }
+    bool deleteRtreeIndex(OperationContext* txn,
+                                const std::string& dbName,
+                                BSONObj& cmdObj,
+                                std::string& errmsg,
+                                BSONObjBuilder& output){
+                                    
+        std::string collectionname;
+        if(cmdObj.hasField("deleteIndexes"))                            
+            collectionname = cmdObj["deleteIndexes"].str();
+        else if(cmdObj.hasField("dropIndexes"))
+            collectionname = cmdObj["dropIndexes"].str();
+        else 
+        {
+            errmsg = "it is not a dropIndex command";
+            return false;
+        }
+            
+        int stat=0;
+        try {
+            stat = IM.DropIndex(txn,dbName, collectionname);
+        }
+        catch (DBException& e) {
+            stat = -1;
+            int code = e.getCode();
+
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errmsg = ss.str();
+            output.append("code", code);
+        }
+        if (1 != stat)
+            errmsg = "The rtree index does not exist.";
+        bool ok = (stat == 1) ? true : false;
+        return ok;                      
     }
 } dropIndexesCmd;
 
@@ -360,6 +889,47 @@ public:
         actions.addAction(ActionType::createIndex);
         out->push_back(Privilege(parseResourcePattern(dbname, cmdObj), actions));
     }
+     virtual bool createRtreeIndex(OperationContext* txn,
+                                const std::string& dbName,
+                                BSONObj& cmdObj,
+                                const std::string& columename,
+                                std::string& errmsg,
+                                BSONObjBuilder& output)
+     {
+        if (!pIndexManagerIO->IsConnected())
+           pIndexManagerIO->connectMyself();
+        if (!pRTreeIO->IsConnected())
+           pRTreeIO->connectMyself();
+        BSONObjBuilder rtreepara;
+        rtreepara.append("collectionName", cmdObj["createIndexes"].str());
+        
+        rtreepara.append("columnName", columename);
+        rtreepara.append("indextype", 1);
+        BSONObj indexes = cmdObj["indexes"].Array()[0].Obj()["key"].Obj();
+        indexes.hasField("maxnode") ? rtreepara.append("maxnode", indexes["maxnode"].Double()) : rtreepara.append("maxnode", 32.0);
+        indexes.hasField("maxleaf") ? rtreepara.append("maxleaf", indexes["maxleaf"].Double()) : rtreepara.append("maxleaf", 32.0);
+        BSONObj rtreeparaobj = rtreepara.obj();
+        //std::string errmsg;
+        int stat = 0;
+        try {
+            stat = IM.PrepareIndex(txn,dbName, rtreeparaobj["collectionName"].str(), rtreeparaobj["columnName"].str(), rtreeparaobj["indextype"].Int(), rtreeparaobj["maxnode"].Double(), rtreeparaobj["maxleaf"].Double());
+        }
+        catch (DBException& e) {
+            int code = e.getCode();
+            stringstream ss;
+            ss << "exception: " << e.what();
+            errmsg = ss.str();
+            output.append("code", code);
+        }
+        if (-1 == stat)
+            errmsg = "The index type you assigned is not 1(rtree index).";
+        if (-2 == stat)
+            errmsg = "Please run registerGeometry command before creating rtree index.";
+        if (-3 == stat)
+            errmsg = "the index has already existed.";
+        bool ok = (stat == 1) ? true : false;
+        return ok;
+     }
 
 } createIndexesCmd;
 
@@ -492,10 +1062,34 @@ public:
         }
 
         const string fullns = dbName + "." + cmdObj.firstElement().valuestrsafe();
-
+        string collection = cmdObj.firstElement().valuestrsafe();
+        BSONObjBuilder query;
+		query.append("NAMESPACE",fullns);
         log() << "DROP: " << fullns;
 
         const auto& db = status.getValue();
+        uassertStatusOK(status.getStatus());
+        shared_ptr<DBConfig> conf = status.getValue();
+        bool is_rtreeindex_exist = conf->checkRtreeExist(txn,query.obj());
+        if (is_rtreeindex_exist)
+        {
+            int stat = 0;
+            try {
+                stat = IM.DropCollection(txn,dbName,collection);
+            }
+            catch (DBException& e) {
+                int code = e.getCode();
+                stringstream ss;
+                ss << "exception: " << e.what();
+                errmsg = ss.str();
+                result.append("code", code);
+            }
+            if (-1 == stat)
+                errmsg = "drop fails.";
+            bool ok = (stat == 1 || stat==0) ? true : false;
+            return ok;
+        }
+        
         if (!db->isShardingEnabled() || !db->isSharded(fullns)) {
             log() << "\tdrop going to do passthrough";
             return passthrough(txn, db, cmdObj, result);

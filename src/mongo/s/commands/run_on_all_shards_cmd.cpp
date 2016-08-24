@@ -41,6 +41,11 @@
 #include "mongo/s/commands/cluster_commands_common.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/log.h"
+#include "mongo/s/catalog/catalog_cache.h"
+#include "mongo/s/config.h"
+
+
+//#include "mongo/s/rtree/rtree_globle.h"
 
 namespace mongo {
 
@@ -69,6 +74,23 @@ void RunOnAllShardsCommand::getShardIds(OperationContext* txn,
     grid.shardRegistry()->getAllShardIds(&shardIds);
 }
 
+ bool RunOnAllShardsCommand::createRtreeIndex(OperationContext* txn,
+                                const std::string& dbName,
+                                BSONObj& cmdObj,
+                                const std::string& columename,
+                                std::string& errmsg,
+                                BSONObjBuilder& output){
+    return false;                        
+}
+
+bool RunOnAllShardsCommand::deleteRtreeIndex(OperationContext* txn,
+                                const std::string& dbName,
+                                BSONObj& cmdObj,
+                                std::string& errmsg,
+                                BSONObjBuilder& output){
+    return false;                        
+}
+
 bool RunOnAllShardsCommand::run(OperationContext* txn,
                                 const std::string& dbName,
                                 BSONObj& cmdObj,
@@ -76,6 +98,58 @@ bool RunOnAllShardsCommand::run(OperationContext* txn,
                                 std::string& errmsg,
                                 BSONObjBuilder& output) {
     LOG(1) << "RunOnAllShardsCommand db: " << dbName << " cmd:" << cmdObj;
+    bool is_rtree=false;
+    std::string columename = "";
+    
+    if (this->name == "createIndexes")
+    {
+        BSONObj index = cmdObj["indexes"].Array()[0].Obj()["key"].Obj();
+        log() << "index:"<< index;
+        std::set<std::string> fields;
+        index.getFieldNames(fields);
+        log() << "index:" << fields.size();
+        for (std::set<std::string>::iterator it = fields.begin(); it != fields.end(); ++it)
+        {
+            log() << index[*it].toString(false);
+            log() << index[*it].toString(false).compare("\"rtree\"");
+            if (index[*it].toString(false).compare("\"rtree\"")==0)
+            {
+                columename = *it;
+                //log() << columename << endl;
+                is_rtree = true;
+                break;
+            }
+        }
+    }
+    //only createIndex
+    if (is_rtree)
+    {
+        return this->createRtreeIndex(txn,dbName,cmdObj,columename,errmsg,output);
+    }
+    
+    is_rtree = false;
+    //auto status = grid.catalogCache()->getDatabase(txn, dbName);
+    auto status = grid.implicitCreateDb(txn, dbName);
+    uassertStatusOK(status.getStatus());
+    std::shared_ptr<DBConfig> conf = status.getValue();
+    BSONObjBuilder bdr;
+    if (this->name == "dropIndexes" || this->name == "deleteIndexes")
+    {
+        bdr.append("NAMESPACE", dbName+"."+cmdObj["deleteIndexes"].str());
+        BSONObj query = bdr.obj();
+        log() << "inma " <<query;
+        columename =std::string(cmdObj["index"].Obj().firstElement().fieldName());
+        std::string meta = conf->getGeometry(txn,query)["COLUMN_NAME"].str();
+        log() << columename <<"      caooooooo";
+        log() << meta ;
+        is_rtree = (meta == columename) && (conf->checkRtreeExist(txn,query));
+        log() << "cao" << is_rtree ;
+    }
+    //only  dropIndexes/deleteIndexes
+    if (is_rtree)
+    {
+        return this->deleteRtreeIndex(txn,dbName,cmdObj,errmsg,output);
+    }
 
     if (_implicitCreateDb) {
         uassertStatusOK(grid.implicitCreateDb(txn, dbName));
@@ -170,3 +244,5 @@ bool RunOnAllShardsCommand::run(OperationContext* txn,
     return true;
 }
 }
+ 
+ 

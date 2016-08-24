@@ -33,6 +33,7 @@
 #include "mongo/base/string_data.h"
 #include "mongo/db/commands.h"
 #include "mongo/s/client/shard.h"
+//#include "mongo/s/rtree/rtree_globle.h"
 
 namespace mongo {
 
@@ -92,6 +93,19 @@ public:
              int options,
              std::string& errmsg,
              BSONObjBuilder& output) final;
+      
+    virtual bool createRtreeIndex(OperationContext* txn,
+                                const std::string& dbName,
+                                BSONObj& cmdObj,
+                                const std::string& columename,
+                                std::string& errmsg,
+                                BSONObjBuilder& output);
+                                
+   virtual bool deleteRtreeIndex(OperationContext* txn,
+                                const std::string& dbName,
+                                BSONObj& cmdObj,
+                                std::string& errmsg,
+                                BSONObjBuilder& output);
 
 private:
     // Use ShardConnection as opposed to ScopedDbConnection
