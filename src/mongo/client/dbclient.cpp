@@ -918,22 +918,22 @@ Status DBClientConnection::connect(const HostAndPort& serverAddress) {
         _failed = true;
         return swIsMasterReply.getStatus();
     }
+	//
+    //auto swProtocolSet = rpc::parseProtocolSetFromIsMasterReply(swIsMasterReply.getValue().data);
+    //if (!swProtocolSet.isOK()) {
+    //    return swProtocolSet.getStatus();
+    //}
 
-    auto swProtocolSet = rpc::parseProtocolSetFromIsMasterReply(swIsMasterReply.getValue().data);
-    if (!swProtocolSet.isOK()) {
-        return swProtocolSet.getStatus();
-    }
+    //_setServerRPCProtocols(swProtocolSet.getValue());
 
-    _setServerRPCProtocols(swProtocolSet.getValue());
+    // auto negotiatedProtocol =
+    //     rpc::negotiate(getServerRPCProtocols(),
+    //                    rpc::computeProtocolSet(WireSpec::instance().minWireVersionOutgoing,
+    //                                            WireSpec::instance().maxWireVersionOutgoing));
 
-    auto negotiatedProtocol =
-        rpc::negotiate(getServerRPCProtocols(),
-                       rpc::computeProtocolSet(WireSpec::instance().minWireVersionOutgoing,
-                                               WireSpec::instance().maxWireVersionOutgoing));
-
-    if (!negotiatedProtocol.isOK()) {
-        return negotiatedProtocol.getStatus();
-    }
+    // if (!negotiatedProtocol.isOK()) {
+    //     return negotiatedProtocol.getStatus();
+    // }
 
     if (_hook) {
         auto validationStatus = _hook(swIsMasterReply.getValue());
