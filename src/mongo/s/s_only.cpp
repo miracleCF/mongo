@@ -47,6 +47,11 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/log.h"
+#include "mongo/s/grid.h"
+#include "mongo/s/catalog/catalog_cache.h"
+#include "mongo/s/config.h"
+
+#include "mongo/db/query/find_common.h"
 
 namespace mongo {
 
@@ -156,9 +161,164 @@ void Command::runAgainstRegistered(OperationContext* txn,
     uassert(16618,
             "Illegal attempt to run a command against a namespace other than $cmd.",
             nsToCollectionSubstring(ns) == "$cmd");
-
+   
+    std::string dbname = nsToDatabase(ns);
     BSONElement e = jsobj.firstElement();
     std::string commandName = e.fieldName();
+    BSONObj query_condition;
+
+    //log()<<"collname in runAgainstRegistered: "<<collName;
+    //auto status = grid.catalogCache()->getDatabase(txn, dbname);
+    auto status = grid.implicitCreateDb(txn, dbname);
+    uassertStatusOK(status.getStatus());
+    std::shared_ptr<DBConfig> conf = status.getValue();
+    BSONObjBuilder bdr;
+    bool is_rtree = false;
+    if (commandName == "insert" || commandName == "delete")
+    {
+        std::string collName = e.String();
+        bdr.append("NAMESPACE", dbname+"."+collName);
+        is_rtree  = conf->checkRtreeExist(txn,bdr.obj());
+        //log()<<"is rtree?:"<< is_rtree; 
+    }
+    if (commandName == "insert"&&is_rtree)
+    {
+        commandName = "insertIndexedDoc";
+    }
+    if (commandName == "delete"&&is_rtree)
+    {
+        BSONObj deleteObj = jsobj["deletes"].Array()[0].Obj();
+        BSONObj queryObj = deleteObj["q"].Obj();
+        if (queryObj.hasField("id"))
+            commandName = "deleteGeoByID";
+        else if ("Polygon" == queryObj["type"].str()||"MultiPolygon" == queryObj["type"].str())
+        {
+            std::string collName = e.String();
+            commandName = "deleteContainedGeoObj";
+            BSONObjBuilder cmdObj;
+            cmdObj.append("collection",collName);
+            cmdObj.append("condition",queryObj);
+            jsobj = cmdObj.obj();
+            log()<<"check delete cmd:"<<jsobj;
+        }       
+    }
+    if(commandName == "find")
+    {
+        std::string collName = e.String();
+        string columnName;
+        //log() << "ns:" << q.ns << ", collname: " << collName << endl;
+        BSONObjBuilder bdr;
+
+        bool is_rtree = false;
+  
+        bool is_registered = false;
+
+        bool is_command_geowithin = false;
+        
+        bool is_command_geointersects = false;
+
+        bool is_command_geonear = false;
+
+        bool is_type_polygon = false;
+    
+        bool is_type_point = false;
+
+        bdr.append("NAMESPACE", dbname+"."+collName);
+        auto database_status = grid.catalogCache()->getDatabase(txn, dbname);
+        uassertStatusOK(database_status.getStatus());
+        std::shared_ptr<DBConfig> conf = database_status.getValue();
+        BSONObj geometadata = conf->getGeometry(txn,bdr.obj());
+        if (!geometadata.isEmpty())
+            is_rtree = geometadata["INDEX_TYPE"].Int() != 0 ? true : false;
+        columnName = geometadata["COLUMN_NAME"].str();
+        //log() << "geowithin columnName:" << std::string(q.query.firstElement().fieldName() );
+        
+        BSONElement geowithincomm;
+        BSONObj geometry;
+        BSONObj type;
+        BSONObj filter = jsobj["filter"].Obj();
+
+        if (!filter.isEmpty() && columnName.compare(string(filter.firstElement().fieldName())) == 0 && filter.firstElement().isABSONObj())
+        {
+          
+            is_registered = true;
+            geowithincomm = filter.firstElement().Obj().firstElement();
+            if ("$geoWithin" == string(geowithincomm.fieldName()))
+            {
+                is_command_geowithin = true;
+      
+                geometry = geowithincomm.Obj();
+ 
+                if (geometry.firstElement().fieldName()!=NULL&&"$geometry" == string(geometry.firstElement().fieldName()))
+                {
+                    
+                    query_condition = geometry["$geometry"].Obj();
+                    if ("Polygon" == query_condition["type"].str()||"MultiPolygon" == query_condition["type"].str())
+                        is_type_polygon = true;
+                }
+            }
+            else if ("$geoIntersects" == string(geowithincomm.fieldName()))
+            {
+                is_command_geointersects = true;
+                geometry = geowithincomm.Obj();
+                query_condition = geometry["$geometry"].Obj();
+            }
+            else if ("$near" == string(geowithincomm.fieldName()))
+            {
+                is_command_geonear = true;
+                geometry = geowithincomm.Obj();
+                if (geometry.firstElement().fieldName()!=NULL&&(geometry.hasField("$geometry")))
+                {
+                    double maxDistance = 100;
+                    if(geometry.hasField("$maxDistance"))
+                        maxDistance= geometry["$maxDistance"].numberDouble();
+                    double minDistance = 0;
+                    if(geometry.hasField("$minDistance"))
+                        minDistance = geometry["$minDistance"].numberDouble();
+                        
+                     //log()<<"maxDistance:"<<maxDistance;
+                     //log()<<"minDistance:"<<minDistance;
+                    BSONObjBuilder query_condition_builder;
+                    query_condition_builder.appendElements(geometry["$geometry"].Obj());
+                    query_condition_builder.append("$maxDistance",maxDistance);
+                    query_condition_builder.append("$minDistance",minDistance);
+                    query_condition = query_condition_builder.obj();
+                    if ("Point" == query_condition["type"].str())
+                        is_type_point = true;
+                }
+            }
+        }
+
+        if (is_rtree&&is_registered&&is_command_geowithin&&is_type_polygon)
+        {
+     
+            commandName = "geoWithinSearch"; 
+         
+  
+            BSONObjBuilder cmdObj;
+            cmdObj.append("collection",collName);
+            cmdObj.append("condition",query_condition);
+            jsobj = cmdObj.obj();
+
+        }
+        if(is_rtree&&is_registered&&is_command_geointersects)
+        {
+            commandName = "geoIntersectSearch"; 
+            BSONObjBuilder cmdObj;
+            cmdObj.append("collection",collName);
+            cmdObj.append("condition",query_condition);
+            jsobj = cmdObj.obj();
+        }
+        if(is_rtree&&is_registered&&is_command_geonear&&is_type_point)
+        {
+            commandName = "geoNearSearch"; 
+            BSONObjBuilder cmdObj;
+            cmdObj.append("collection",collName);
+            cmdObj.append("condition",query_condition);
+            jsobj = cmdObj.obj();
+        }
+    }
+
     Command* c = e.type() ? Command::findCommand(commandName) : NULL;
     if (!c) {
         Command::appendCommandStatus(

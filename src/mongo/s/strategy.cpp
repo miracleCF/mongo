@@ -106,7 +106,203 @@ void Strategy::queryOp(OperationContext* txn, Request& request) {
                   string("the 'exhaust' query option is invalid for mongos queries: ") + q.ns +
                       " " + q.query.toString());
     }
+    if(!q.query.isEmpty())
+    {
+      
+        std::string collName = nsToCollectionSubstring(q.ns).toString() ;
+    
+        std::string dbname = nsToDatabase(q.ns);
+        std::string commandName = "";//√¸¡Ó√˚
+        
+        string columnName="";
+        //log() << "ns:" << q.ns << ", collname: " << collName ;
+		BSONObj query_condition;
+        BSONObjBuilder bdr;
+        
+        
+        bool is_registered = false;
+        
+        bool is_command_geowithin = false;
+        
+        bool is_command_geointersects = false;
+        
+        bool is_command_geonear = false;
+		
 
+        
+        bool is_type_polygon = false;
+                
+        bool is_type_point = false;
+		bool is_rtree = false;
+        
+        bdr.append("NAMESPACE", dbname+"."+collName);
+        auto database_status = grid.catalogCache()->getDatabase(txn, dbname);
+        uassertStatusOK(database_status.getStatus());
+        std::shared_ptr<DBConfig> conf = database_status.getValue();
+        BSONObj geometadata = conf->getGeometry(txn,bdr.obj());
+        BSONElement geowithincomm;
+        BSONObj geometry;
+        BSONObj type;
+        BSONObj filter;
+        if (!geometadata.isEmpty())
+        {
+          is_rtree = geometadata["INDEX_TYPE"].Int() != 0 ? true : false;
+          columnName = geometadata["COLUMN_NAME"].str();
+          filter = q.query;
+        }
+            
+        //log() << "geowithin columnName:" << std::string(q.query.firstElement().fieldName() );
+        
+        
+        if (is_rtree && !filter.isEmpty() && columnName.compare(string(filter.firstElement().fieldName())) == 0 && filter.firstElement().isABSONObj())
+        {
+            //log() << "here in R-tree queryop:" << filter.firstElement().Obj();
+            is_registered = true;
+            geowithincomm = filter.firstElement().Obj().firstElement();
+            if ("$geoWithin" == string(geowithincomm.fieldName()))
+            {
+                is_command_geowithin = true;
+                //log() << "geowithin : " << string(geowithincomm.fieldName()) << endl; ;
+                geometry = geowithincomm.Obj();
+                //log() << "geometry cmd:" << geometry << endl;
+                //log() << "geometry cmd name:" << geometry.firstElement().fieldName() << endl;
+                if (geometry.firstElement().fieldName()!=NULL&&"$geometry" == string(geometry.firstElement().fieldName()))
+                {
+                    //last step
+                    query_condition = geometry["$geometry"].Obj();
+                    if ("Polygon" == query_condition["type"].str()||"MultiPolygon" == query_condition["type"].str())
+                        is_type_polygon = true;
+                }
+            }
+            else if ("$geoIntersects" == string(geowithincomm.fieldName()))
+            {
+                is_command_geointersects = true;
+                geometry = geowithincomm.Obj();
+                query_condition = geometry["$geometry"].Obj();
+            }
+            else if ("$near" == string(geowithincomm.fieldName()))
+            {
+                is_command_geonear = true;
+                geometry = geowithincomm.Obj();
+                if (geometry.firstElement().fieldName()!=NULL&&"$geometry" == string(geometry.firstElement().fieldName()))
+                {
+                    query_condition = geometry["$geometry"].Obj();
+                    if ("Point" == query_condition["type"].str())
+                        is_type_point = true;
+                }
+            }
+            if(is_command_geowithin||is_command_geointersects||is_command_geonear)
+            {
+                
+                int loops = 5;
+                bool cmChangeAttempted = false;
+                std::string newnsforcommand = dbname+"."+"$cmd";
+                const char* newns = newnsforcommand.c_str();
+                // log()<<"newns:"<<newns;
+                while (true) {
+                    try {                
+                        BSONObjBuilder cmdObj_builder;
+                        cmdObj_builder.append("find",collName);
+                        cmdObj_builder.append("filter",q.query);
+                        BSONObj cmdObj= cmdObj_builder.obj();
+                        BSONElement e = cmdObj.firstElement();
+                        {
+                            if (e.type() == Object &&
+                                (e.fieldName()[0] == '$' ? str::equals("query", e.fieldName() + 1)
+                                                        : str::equals("query", e.fieldName()))) {
+                                // Extract the embedded query object.
+            
+                                if (cmdObj.hasField(Query::ReadPrefField.name())) {
+                                    // The command has a read preference setting. We don't want
+                                    // to lose this information so we copy this to a new field
+                                    // called $queryOptions.$readPreference
+                                    BSONObjBuilder finalCmdObjBuilder;
+                                    finalCmdObjBuilder.appendElements(e.embeddedObject());
+            
+                                    BSONObjBuilder queryOptionsBuilder(
+                                        finalCmdObjBuilder.subobjStart("$queryOptions"));
+                                    queryOptionsBuilder.append(cmdObj[Query::ReadPrefField.name()]);
+                                    queryOptionsBuilder.done();
+            
+                                    cmdObj = finalCmdObjBuilder.obj();
+                                } else {
+                                    cmdObj = e.embeddedObject();
+                                }
+                            }
+                        }
+                        
+                        OpQueryReplyBuilder reply;
+                        {
+                            std::string commandName = e.fieldName();
+                            if("find"==commandName)
+                            {
+                                BSONObjBuilder builder;
+                                std::vector<BSONObj> batch;
+                                auto cursorId = ClusterFind::runQuery(txn, newns, cmdObj, builder, q.queryOptions, &batch);
+                                uassertStatusOK(cursorId.getStatus());
+                            
+                                // Fill out the response buffer.
+                                int numResults = 0;
+                                OpQueryReplyBuilder reply;
+                                for (auto&& obj : batch) {
+                                    obj.appendSelfToBufBuilder(reply.bufBuilderForResults());
+                                    numResults++;
+                                }
+                                reply.send(request.p(),
+                                        0,  // query result flags
+                                        request.m(),
+                                        numResults,
+                                        0,  // startingFrom
+                                        cursorId.getValue());
+                                return;
+                            }
+                            
+                            BSONObjBuilder builder(reply.bufBuilderForResults());
+                            Command::runAgainstRegistered(txn, newns, cmdObj, builder, q.queryOptions);
+                            reply.sendCommandReply(request.p(), request.m());
+                            return;
+                             
+                        }
+                        
+                        
+                    } catch (const StaleConfigException& e) {
+                        if (loops <= 0)
+                            throw e;
+            
+                        loops--;
+                        //log() << "retrying command: " << q.query;
+            
+                        // For legacy reasons, ns may not actually be set in the exception :-(
+                        string staleNS = e.getns();
+                        if (staleNS.size() == 0)
+                            staleNS = newns;
+            
+                        ShardConnection::checkMyConnectionVersions(txn, staleNS);
+                        if (loops < 4)
+                            versionManager.forceRemoteCheckShardVersionCB(txn, staleNS);
+                    } catch (const DBException& e) {
+                        if (e.getCode() == ErrorCodes::IncompatibleCatalogManager) {
+                            cmChangeAttempted = true;
+            
+                            grid.forwardingCatalogManager()->waitForCatalogManagerChange(txn);
+                        } else {
+                            OpQueryReplyBuilder reply;
+                            {
+                                BSONObjBuilder builder(reply.bufBuilderForResults());
+                                Command::appendCommandStatus(builder, e.toStatus());
+                            }
+                            reply.sendCommandReply(request.p(), request.m());
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+        }
+    }
+    
+
+   
     // Determine the default read preference mode based on the value of the slaveOk flag.
     ReadPreference readPreferenceOption = (q.queryOptions & QueryOption_SlaveOk)
         ? ReadPreference::SecondaryPreferred
@@ -288,8 +484,8 @@ bool Strategy::handleSpecialNamespaces(OperationContext* txn, Request& request, 
         auto interposedCmd = cmdBob.done();
         // Rewrite upgraded pseudoCommands to run on the 'admin' database.
         NamespaceString interposedNss("admin", "$cmd");
-        Command::runAgainstRegistered(
-            txn, interposedNss.ns().c_str(), interposedCmd, reply, q.queryOptions);
+        //Command::runAgainstRegistered(
+            //request,txn, interposedNss.ns().c_str(), interposedCmd, reply, q.queryOptions);
     };
 
     if (strcmp(ns, "inprog") == 0) {
