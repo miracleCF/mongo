@@ -16,13 +16,20 @@ env.Library(
     ],
 )
 
+
+#  we modified this lib to add r-tree components to MongoDB
+#  such as new cursors and r-tree LIBDEPS
+
 env.Library(
     target="cluster_client_cursor",
     source=[
+        "cluster_client_cursor_impl_rtree_near.cpp",
+        "cluster_client_cursor_impl_rtree_range.cpp",
         "cluster_client_cursor_impl.cpp",
     ],
     LIBDEPS=[
         "router_exec_stage",
+
     ],
 )
 

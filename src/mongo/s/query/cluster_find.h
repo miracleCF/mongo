@@ -30,6 +30,8 @@
 
 #include <vector>
 
+
+
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/cursor_id.h"
 #include "mongo/db/query/cursor_response.h"
@@ -68,6 +70,16 @@ public:
                                          const CanonicalQuery& query,
                                          const ReadPreferenceSetting& readPref,
                                          std::vector<BSONObj>* results);
+/**
+ *Overload a runQuery function 
+ *to handle the query with rtree
+ */
+    static StatusWith<CursorId> runQuery(OperationContext* txn,
+                                        const char* ns,
+                                        BSONObj& jsobj,
+                                        BSONObjBuilder& anObjBuilder,
+                                        int queryOptions,
+                                        std::vector<BSONObj>* results);
 
     /**
      * Executes the getMore request 'request', and on success returns a CursorResponse.

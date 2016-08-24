@@ -26,7 +26,7 @@
  *    it in the license file.
  */
 
-#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kQuery
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kCommand
 
 #include "mongo/platform/basic.h"
 
@@ -57,6 +57,9 @@
 #include "mongo/s/stale_exception.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
+//r-tree cursor 
+#include "mongo/s/query/cluster_client_cursor_impl_rtree_range.h"
+#include "mongo/s/query/cluster_client_cursor_impl_rtree_near.h"
 
 namespace mongo {
 
@@ -191,6 +194,295 @@ StatusWith<CursorId> runConfigServerQuerySCCC(const CanonicalQuery& query,
 
     return outgoingCursorResponse.getValue().getCursorId();
 }
+
+StatusWith<CursorId> runQueryWithoutRetrying(OperationContext* txn,
+                                            const char* ns,
+                                            BSONObj& jsobj,
+                                            BSONObjBuilder& anObjBuilder,
+                                            int queryOptions,
+                                            std::vector<BSONObj>* results) {
+                                                
+    /** 
+     * start to parse enough info for r-tree cursor and valid check
+     * DB_NAME
+     * COLLECTION_NAME
+     * InputGeometry
+     */
+     
+    //log()<<"entering runQueryWithoutRetrying";
+    BSONElement e = jsobj.firstElement();
+    std::string dbname = nsToDatabase(ns);
+    std::string collName = e.String();
+    std::string columnName;
+    BSONObj query_condition;
+    std::string commandName = e.fieldName();
+    
+    
+    BSONObjBuilder bdr;
+    bdr.append("NAMESPACE", dbname+"."+collName);
+    auto database_status = grid.catalogCache()->getDatabase(txn, dbname);
+    uassertStatusOK(database_status.getStatus());
+    std::shared_ptr<DBConfig> conf = database_status.getValue();
+    BSONObj geometadata = conf->getGeometry(txn,bdr.obj());
+    columnName = geometadata["COLUMN_NAME"].str();
+    BSONElement geowithincomm;
+    BSONObj geometry;
+    BSONObj type;
+    BSONObj filter = jsobj["filter"].Obj();
+    
+    double maxDistance = 100;
+    double minDistance = 0;
+    bool is_registered = false;
+    bool is_command_geowithin = false;
+    bool is_command_geointersects = false;
+    bool is_command_geonear = false;
+    bool is_type_polygon = false;
+    bool is_type_point = false;
+    
+    if (!filter.isEmpty() && columnName.compare(std::string(filter.firstElement().fieldName())) == 0 && filter.firstElement().isABSONObj())
+    {
+        is_registered = true;// we find the geometadata in config server
+        geowithincomm = filter.firstElement().Obj().firstElement();
+        if ("$geoWithin" == std::string(geowithincomm.fieldName()))
+        {
+            is_command_geowithin = true;
+            geometry = geowithincomm.Obj();
+            if (geometry.firstElement().fieldName()!=NULL&&"$geometry" == std::string(geometry.firstElement().fieldName()))
+            {
+                query_condition = geometry["$geometry"].Obj();
+                if ("Polygon" == query_condition["type"].str()||"MultiPolygon" == query_condition["type"].str())
+                    is_type_polygon = true;
+            }
+        }
+        else if ("$geoIntersects" == std::string(geowithincomm.fieldName()))
+        {
+            is_command_geointersects = true;
+            geometry = geowithincomm.Obj();
+            query_condition = geometry["$geometry"].Obj();
+        }
+        else if ("$near" == std::string(geowithincomm.fieldName()))
+        {
+            is_command_geonear = true;
+            geometry = geowithincomm.Obj();
+            if (geometry.firstElement().fieldName()!=NULL&&(geometry.hasField("$geometry")))
+            {
+                if(geometry.hasField("$maxDistance"))
+                    maxDistance= geometry["$maxDistance"].numberDouble();
+                if(geometry.hasField("$minDistance"))
+                    minDistance = geometry["$minDistance"].numberDouble();
+                BSONObjBuilder query_condition_builder;
+                query_condition_builder.appendElements(geometry["$geometry"].Obj());
+                //here unnecessary $minDistance and $maxDistance is appended
+                //!!!!!
+                query_condition_builder.append("$maxDistance",maxDistance);
+                query_condition_builder.append("$minDistance",minDistance);
+                query_condition = query_condition_builder.obj();
+                if ("Point" == query_condition["type"].str())
+                    is_type_point = true;
+            }
+        }
+    }
+    
+    /**  
+     * parse and check complete, construct cursor;
+     * because ccc is mongo_disallow_copying, we can't just create an
+     * empty ccc object and construct in different conditions
+     * we copy the code 3 times
+     * hope there is a better way
+     */
+     if(is_registered&&is_command_geowithin)
+     {
+         auto ccc=RTreeRangeClusterClientCursorImpl::make(txn,dbname,collName,query_condition,1);
+         //--------------------------------------------------------------------------
+          auto cursorState = ClusterCursorManager::CursorState::NotExhausted;
+          int bytesBuffered = 0;
+          int i=20;
+          while (i>0) {
+              auto next = ccc->next();
+              if (!next.isOK()) {
+                  return next.getStatus();
+              }
+
+              if (!next.getValue()) {
+                  if (!ccc->isTailable() || ccc->remotesExhausted()) {
+                      cursorState = ClusterCursorManager::CursorState::Exhausted;
+                  }
+                  break;
+              }
+              int sizeEstimate = bytesBuffered + next.getValue()->objsize() +
+                  ((results->size() + 1U) * kPerDocumentOverheadBytesUpperBound);
+              if (sizeEstimate > BSONObjMaxUserSize && !results->empty()) {
+                  ccc->queueResult(*next.getValue());
+                  break;
+              }
+              BSONObj obj = std::move(*next.getValue());
+              if(obj.isEmpty())
+              {
+                  break;
+              }
+              bytesBuffered += next.getValue()->objsize();    
+              results->push_back(obj);
+              --i;
+          }
+          auto cursorManager = grid.getCursorManager();
+          const auto cursorType = ClusterCursorManager::CursorType::NamespaceSharded;                                   
+          const auto cursorLifetime = ClusterCursorManager::CursorLifetime::Immortal;
+          std::string nss_str = dbname+"."+jsobj.firstElement().String();
+          StringData da(nss_str);
+          NamespaceString nss(da);
+          return cursorManager->registerCursor(
+              ccc.releaseCursor(), nss, cursorType, cursorLifetime);
+          //--------------------------------------------------------------------------
+     }
+     if (is_registered&&is_command_geointersects)
+     {
+         auto ccc = RTreeRangeClusterClientCursorImpl::make(txn,dbname,collName,query_condition,0);
+         //--------------------------------------------------------------------------
+          auto cursorState = ClusterCursorManager::CursorState::NotExhausted;
+          int bytesBuffered = 0;
+          int i=20;
+          while (i>0) {
+              auto next = ccc->next();
+              if (!next.isOK()) {
+                  return next.getStatus();
+              }
+
+              if (!next.getValue()) {
+                  if (!ccc->isTailable() || ccc->remotesExhausted()) {
+                      cursorState = ClusterCursorManager::CursorState::Exhausted;
+                  }
+                  break;
+              }
+              int sizeEstimate = bytesBuffered + next.getValue()->objsize() +
+                  ((results->size() + 1U) * kPerDocumentOverheadBytesUpperBound);
+              if (sizeEstimate > BSONObjMaxUserSize && !results->empty()) {
+                  ccc->queueResult(*next.getValue());
+                  break;
+              }
+              BSONObj obj = std::move(*next.getValue());
+              if(obj.isEmpty())
+              {
+                  break;
+              }
+              bytesBuffered += next.getValue()->objsize();    
+              results->push_back(obj);
+              --i;
+          }
+          auto cursorManager = grid.getCursorManager();
+          const auto cursorType = ClusterCursorManager::CursorType::NamespaceSharded;                                   
+          const auto cursorLifetime = ClusterCursorManager::CursorLifetime::Immortal;
+          std::string nss_str = dbname+"."+jsobj.firstElement().String();
+          StringData da(nss_str);
+          NamespaceString nss(da);
+          return cursorManager->registerCursor(
+              ccc.releaseCursor(), nss, cursorType, cursorLifetime);
+          //--------------------------------------------------------------------------
+     }
+     else if (is_registered&&is_command_geonear&&is_type_point)
+     {
+        //  cout<<endl<<endl<<query_condition.jsonString();
+         BSONObj coords=query_condition["coordinates"].Obj();
+         //we parse the query_condition, the BSONObj will match the 1st answer, so the new appended field is matched
+         
+        //  cout<<endl<<endl<<coords.jsonString();
+         vector<BSONElement> vv;
+         coords.elems(vv);
+         auto ccc = RTreeNearClusterClientCursorImpl::make(txn,
+                                                      dbname,
+                                                      collName,
+                                                      vv[0].Number(),
+                                                      vv[1].Number(),
+                                                      minDistance,
+                                                      maxDistance);
+          //--------------------------------------------------------------------------
+          auto cursorState = ClusterCursorManager::CursorState::NotExhausted;
+          int bytesBuffered = 0;
+          int i=20;
+          while (i>0) {
+              auto next = ccc->next();
+              if (!next.isOK()) {
+                  return next.getStatus();
+              }
+
+              if (!next.getValue()) {
+                  if (!ccc->isTailable() || ccc->remotesExhausted()) {
+                      cursorState = ClusterCursorManager::CursorState::Exhausted;
+                  }
+                  break;
+              }
+              int sizeEstimate = bytesBuffered + next.getValue()->objsize() +
+                  ((results->size() + 1U) * kPerDocumentOverheadBytesUpperBound);
+              if (sizeEstimate > BSONObjMaxUserSize && !results->empty()) {
+                  ccc->queueResult(*next.getValue());
+                  break;
+              }
+              BSONObj obj = std::move(*next.getValue());
+              if(obj.isEmpty())
+              {
+                  break;
+              }
+              bytesBuffered += next.getValue()->objsize();    
+              results->push_back(obj);
+              --i;
+          }
+          auto cursorManager = grid.getCursorManager();
+          const auto cursorType = ClusterCursorManager::CursorType::NamespaceSharded;                                   
+          const auto cursorLifetime = ClusterCursorManager::CursorLifetime::Immortal;
+          std::string nss_str = dbname+"."+jsobj.firstElement().String();
+          StringData da(nss_str);
+          NamespaceString nss(da);
+          return cursorManager->registerCursor(
+              ccc.releaseCursor(), nss, cursorType, cursorLifetime);
+          //--------------------------------------------------------------------------
+     }
+     
+     
+          auto ccc=RTreeRangeClusterClientCursorImpl::make(txn,dbname,collName,query_condition,1);
+          //--------------------------------------------------------------------------
+          auto cursorState = ClusterCursorManager::CursorState::NotExhausted;
+          int bytesBuffered = 0;
+          int i=20;
+          while (i>0) {
+              auto next = ccc->next();
+              if (!next.isOK()) {
+                  return next.getStatus();
+              }
+
+              if (!next.getValue()) {
+                  if (!ccc->isTailable() || ccc->remotesExhausted()) {
+                      cursorState = ClusterCursorManager::CursorState::Exhausted;
+                  }
+                  break;
+              }
+              int sizeEstimate = bytesBuffered + next.getValue()->objsize() +
+                  ((results->size() + 1U) * kPerDocumentOverheadBytesUpperBound);
+              if (sizeEstimate > BSONObjMaxUserSize && !results->empty()) {
+                  ccc->queueResult(*next.getValue());
+                  break;
+              }
+              BSONObj obj = std::move(*next.getValue());
+              if(obj.isEmpty())
+              {
+                  break;
+              }
+              bytesBuffered += next.getValue()->objsize();    
+              results->push_back(obj);
+              --i;
+          }
+          auto cursorManager = grid.getCursorManager();
+          const auto cursorType = ClusterCursorManager::CursorType::NamespaceSharded;                                   
+          const auto cursorLifetime = ClusterCursorManager::CursorLifetime::Immortal;
+          std::string nss_str = dbname+"."+jsobj.firstElement().String();
+          StringData da(nss_str);
+          NamespaceString nss(da);
+          return cursorManager->registerCursor(
+              ccc.releaseCursor(), nss, cursorType, cursorLifetime);
+          //--------------------------------------------------------------------------
+     
+     
+                                    
+}
+                                             
 
 StatusWith<CursorId> runQueryWithoutRetrying(OperationContext* txn,
                                              const CanonicalQuery& query,
@@ -330,6 +622,31 @@ StatusWith<CursorId> runQueryWithoutRetrying(OperationContext* txn,
 
 const size_t ClusterFind::kMaxStaleConfigRetries = 10;
 
+//rtree query
+StatusWith<CursorId> ClusterFind::runQuery(OperationContext* txn,
+                                            const char* ns,
+                                            BSONObj& jsobj,
+                                            BSONObjBuilder& anObjBuilder,
+                                            int queryOptions,
+                                            std::vector<BSONObj>* results){
+    //log()<<"entering runQuery()";
+    invariant(results);
+    auto cursorId = runQueryWithoutRetrying(
+            txn, ns, jsobj, anObjBuilder, queryOptions, results);
+    if (cursorId.isOK()) {
+        return cursorId;
+    }
+    auto status = std::move(cursorId.getStatus());
+
+    if (!ErrorCodes::isStaleShardingError(status.code())) {
+        // Errors other than receiving a stale metadata message from MongoD are fatal to the
+        // operation. Network errors and replication retries happen at the level of the
+        // AsyncResultsMerger.
+        return status;
+    }
+    return CursorId(0);                                               
+}
+
 StatusWith<CursorId> ClusterFind::runQuery(OperationContext* txn,
                                            const CanonicalQuery& query,
                                            const ReadPreferenceSetting& readPref,
@@ -420,6 +737,9 @@ StatusWith<CursorResponse> ClusterFind::runGetMore(OperationContext* txn,
     long long batchSize = request.batchSize.value_or(0);
     long long startingFrom = pinnedCursor.getValue().getNumReturnedSoFar();
     auto cursorState = ClusterCursorManager::CursorState::NotExhausted;
+    int signal = 0;
+    
+    //log()<<"batchSize:"<<batchSize<<"   batch.size:"<< batch.size()<<"  bytesBuffered:"<<bytesBuffered;
     while (!FindCommon::enoughForGetMore(batchSize, batch.size(), bytesBuffered)) {
         auto next = pinnedCursor.getValue().next();
         if (!next.isOK()) {
@@ -446,10 +766,26 @@ StatusWith<CursorResponse> ClusterFind::runGetMore(OperationContext* txn,
         }
 
         // Add doc to the batch.
-        bytesBuffered += next.getValue()->objsize();
-        batch.push_back(std::move(*next.getValue()));
+        BSONObj obj = std::move(*next.getValue());
+         //log()<<"result:"<<obj;
+        if(obj.isEmpty())
+        {
+            //log()<<"obj is empty?";
+            if(signal ==0)
+            {
+               cursorState = ClusterCursorManager::CursorState::Exhausted;//without this, zombie cursor will be created, and will cause kill problem? Don't know why now.
+               pinnedCursor.getValue().isExhausted();
+            }
+             //log()<<"signal: "<<signal;
+            break;
+        }
+        bytesBuffered += obj.objsize();
+        //log()<<"buffer size: "<<bytesBuffered;
+        batch.push_back(obj);
+        signal++;
     }
-
+    
+    //if(cursorState == ClusterCursorManager::CursorState::Exhausted)
     // Transfer ownership of the cursor back to the cursor manager.
     pinnedCursor.getValue().returnCursor(cursorState);
 

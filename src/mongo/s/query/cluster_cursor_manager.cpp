@@ -35,6 +35,7 @@
 #include "mongo/util/clock_source.h"
 #include "mongo/util/mongoutils/str.h"
 
+
 namespace mongo {
 
 namespace {
@@ -109,6 +110,12 @@ ClusterCursorManager::PinnedCursor& ClusterCursorManager::PinnedCursor::operator
     _nss = std::move(other._nss);
     _cursorId = std::move(other._cursorId);
     return *this;
+}
+
+void ClusterCursorManager::PinnedCursor::isExhausted()
+{
+    invariant(_cursor);
+    _cursor->setExhausted(true);
 }
 
 StatusWith<boost::optional<BSONObj>> ClusterCursorManager::PinnedCursor::next() {

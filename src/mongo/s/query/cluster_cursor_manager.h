@@ -188,6 +188,8 @@ public:
          * exhausted. Cannot be called after returnCursor() is called. A cursor must be owned.
          */
         bool remotesExhausted();
+        
+        void isExhausted();
 
         /**
          * Sets the maxTimeMS value that the cursor should forward with any internally issued

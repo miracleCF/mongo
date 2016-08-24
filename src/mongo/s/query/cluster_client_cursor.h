@@ -96,6 +96,8 @@ public:
      * Returns whether or not all the remote cursors underlying this cursor have been exhausted.
      */
     virtual bool remotesExhausted() = 0;
+    
+    virtual void setExhausted(bool isExhausted) = 0;
 
     /**
      * Sets the maxTimeMS value that the cursor should forward with any internally issued getMore
