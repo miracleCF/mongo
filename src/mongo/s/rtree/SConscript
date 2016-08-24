@@ -1,0 +1,31 @@
+# -*- mode: python -*-
+
+Import("env")
+
+env.Library(
+    target='rtreeindex',
+    source=[
+        'transaction.cpp',
+        'rtree_data_structure.cpp',
+        'mongo_geometry_parser.cpp',
+        'rtree_cachelru2.cpp',
+        'rtree_geonear_search_node.cpp',
+        'rtree_io.cpp',
+        'rtree_core.cpp',
+        'index_manager_io.cpp',
+        'index_manager_core.cpp',
+        'geojson_engine.cpp',        
+        'rtree_geonear_cursor.cpp',
+        'rtree_range_query_cursor.cpp',
+        'rtree_globle.cpp'
+        
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/client/parallel',
+        '$BUILD_DIR/mongo/db/pipeline/pipeline',
+        '$BUILD_DIR/mongo/db/commands/killcursors_common',
+        '$BUILD_DIR/mongo/s/coreshard',
+        '$BUILD_DIR/mongo/s/mongoscore'
+    ],
+)
+
