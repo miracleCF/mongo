@@ -24,7 +24,7 @@
 
 namespace rtree_index
 {
-    RTreeIndex::RTree::RTree(int Max_Node, int Max_Leaf, mongo::OID Root, MongoIO* UserIO)
+    rtree_index::RTree::RTree(int Max_Node, int Max_Leaf, mongo::OID Root, MongoIO* UserIO)
 	{
 		_Max_Node = Max_Node;
 		_Max_Leaf = Max_Leaf;
@@ -32,18 +32,18 @@ namespace rtree_index
 		IO = UserIO;
 	}
 
-	RTreeIndex::RTree::RTree()
+	rtree_index::RTree::RTree()
 	{
 		//Nothing is done here 
 	}
 
 
-	void RTreeIndex::RTree::SetRoot(mongo::OID Root)
+	void rtree_index::RTree::SetRoot(mongo::OID Root)
 	{
 		_Root = Root;
 	}
 
-	bool RTreeIndex::RTree::InsertRoot(OperationContext* txn,mongo::OID &Root)
+	bool rtree_index::RTree::InsertRoot(OperationContext* txn,mongo::OID &Root)
 	{
 		Node RootNode(_Max_Leaf);
 		Root = IO->Basic_Generate_Key();
@@ -52,7 +52,7 @@ namespace rtree_index
 		return true;
 	}
 
-	bool RTreeIndex::RTree::Insert(OperationContext* txn,mongo::OID &Root, Branch branch2insert, int Level)
+	bool rtree_index::RTree::Insert(OperationContext* txn,mongo::OID &Root, Branch branch2insert, int Level)
 	{
 		mongo::OID newNode;
 		if (Insert2(txn,Root, newNode, branch2insert, Level))
@@ -77,7 +77,7 @@ namespace rtree_index
 		return false;
 	}
 
-	bool RTreeIndex::RTree::Insert2(OperationContext* txn,mongo::OID NodeOID, mongo::OID &newNode, Branch branch2insert, int Level)
+	bool rtree_index::RTree::Insert2(OperationContext* txn,mongo::OID NodeOID, mongo::OID &newNode, Branch branch2insert, int Level)
 	{
 		Node CurrentNode=IO->Basic_Find_One_Node(NodeOID);
 
@@ -126,7 +126,7 @@ namespace rtree_index
 	}
 	
 		
-	bool RTreeIndex::RTree::Search(geos::geom::Geometry  *SearchGeometry , vector<mongo::OID> &Results, vector<bool> &lazyIntersect)
+	bool rtree_index::RTree::Search(geos::geom::Geometry  *SearchGeometry , vector<mongo::OID> &Results, vector<bool> &lazyIntersect)
 	{
 		Search2(_Root, SearchGeometry, 0, Results, lazyIntersect);
 		if (Results.size() == 0)
@@ -138,7 +138,7 @@ namespace rtree_index
 
 
 	
-	bool RTreeIndex::RTree::Search2(mongo::OID nodeKey, geos::geom::Geometry * SearchGeometry, int Level, vector<mongo::OID> &OIDList, vector<bool> &lazyIntersect)
+	bool rtree_index::RTree::Search2(mongo::OID nodeKey, geos::geom::Geometry * SearchGeometry, int Level, vector<mongo::OID> &OIDList, vector<bool> &lazyIntersect)
 	{
 		
 		Node   currentNode = IO->Basic_Find_One_Node(nodeKey);
@@ -221,7 +221,7 @@ namespace rtree_index
 	}
 
 	
-	Branch  RTreeIndex::RTree::createBranch(bool HasData, MBR m, mongo::OID childKey)
+	Branch  rtree_index::RTree::createBranch(bool HasData, MBR m, mongo::OID childKey)
 	{
 		Branch theBranch2create;
 		theBranch2create.HasData = HasData;
@@ -231,7 +231,7 @@ namespace rtree_index
 	}
 
 	
-	MBR RTreeIndex::RTree::comBineMBR(MBR m1, MBR m2)
+	MBR rtree_index::RTree::comBineMBR(MBR m1, MBR m2)
 	{
 		double minx, miny, maxx, maxy;
 		minx = m1.MinX < m2.MinX ? m1.MinX : m2.MinX;
@@ -242,7 +242,7 @@ namespace rtree_index
 	}
 
 	
-	int RTreeIndex::RTree::SelectBestBranch(Node CurrentNode, MBR m)
+	int rtree_index::RTree::SelectBestBranch(Node CurrentNode, MBR m)
 	{
 
 		int best=0;
@@ -284,7 +284,7 @@ namespace rtree_index
 	}
 
 	
-	double RTreeIndex::RTree::RTreeMBRSphericalVolume(MBR m)
+	double rtree_index::RTree::RTreeMBRSphericalVolume(MBR m)
 	{
 
 		//register int i;
@@ -300,7 +300,7 @@ namespace rtree_index
 	}
 
 	
-	bool RTreeIndex::RTree::InsertBranch(OperationContext* txn,mongo::OID terget, Branch branch2insert, mongo::OID &newNode)
+	bool rtree_index::RTree::InsertBranch(OperationContext* txn,mongo::OID terget, Branch branch2insert, mongo::OID &newNode)
 	{
 
 		Node CurrentNode=IO->Basic_Find_One_Node(terget);
@@ -340,7 +340,7 @@ namespace rtree_index
 	}
 
 	
-	bool RTreeIndex::RTree::splitNode(OperationContext* txn,mongo::OID currentOID, Branch Branch2Insert, mongo::OID &newNode)
+	bool rtree_index::RTree::splitNode(OperationContext* txn,mongo::OID currentOID, Branch Branch2Insert, mongo::OID &newNode)
 	{
 		Node CurrentNode=IO->Basic_Find_One_Node(currentOID);
 
@@ -514,7 +514,7 @@ namespace rtree_index
 	}
 
 	
-	MBR RTreeIndex::RTree::createCover(mongo::OID keyofcreate)
+	MBR rtree_index::RTree::createCover(mongo::OID keyofcreate)
 	{
 		Node target=IO->Basic_Find_One_Node(keyofcreate);
 		int Max_Size = (target.Level == 0 ? _Max_Leaf : _Max_Node);
@@ -540,7 +540,7 @@ namespace rtree_index
 	}
 
 	
-	Node RTreeIndex::RTree::NewNode(int Level, mongo::OID NodeKey)
+	Node rtree_index::RTree::NewNode(int Level, mongo::OID NodeKey)
 	{
 		if (Level == 0)
 		{
@@ -560,7 +560,7 @@ namespace rtree_index
 	}
 
 	
-	int RTreeIndex::RTree::Intersect(MBR m1, MBR m2)
+	int rtree_index::RTree::Intersect(MBR m1, MBR m2)
 	{
 		if (m1.MinX > m2.MaxX || m2.MinX > m1.MaxX || m1.MinY > m2.MaxY || m2.MinY > m1.MaxY)
 		{
@@ -578,7 +578,7 @@ namespace rtree_index
 	}
 
 
-	bool RTreeIndex::RTree::DeleteNode(OperationContext* txn,mongo::OID &RootKey, mongo::OID KeyNode2Delete, MBR mbrOfDeleteNode)
+	bool rtree_index::RTree::DeleteNode(OperationContext* txn,mongo::OID &RootKey, mongo::OID KeyNode2Delete, MBR mbrOfDeleteNode)
 	{
 		vector<mongo::OID> reInsertList;
 		if (DeleteNode2(txn,RootKey, KeyNode2Delete, mbrOfDeleteNode, reInsertList))
@@ -635,7 +635,7 @@ namespace rtree_index
 	}
 
 	
-	bool RTreeIndex::RTree::DeleteNode2(OperationContext* txn,mongo::OID NodeKey, mongo::OID Key2Delete, MBR mbrOFDeletingNode, vector<mongo::OID> &L)
+	bool rtree_index::RTree::DeleteNode2(OperationContext* txn,mongo::OID NodeKey, mongo::OID Key2Delete, MBR mbrOFDeletingNode, vector<mongo::OID> &L)
 	{
 		Node currentNode = IO->Basic_Find_One_Node(NodeKey);
 		int theLevel = currentNode.Level;
@@ -702,7 +702,7 @@ namespace rtree_index
 
 
 	
-	bool RTreeIndex::RTree::ReConfigure(int Max_Node, int Max_Leaf, mongo::OID Root, string DB_NAME, string STORAGE_NAME)
+	bool rtree_index::RTree::ReConfigure(int Max_Node, int Max_Leaf, mongo::OID Root, string DB_NAME, string STORAGE_NAME)
 	{
 		_Max_Node = Max_Node;
 		_Max_Leaf = Max_Leaf;

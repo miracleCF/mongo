@@ -313,11 +313,11 @@ namespace index_manager
         uassertStatusOK(status.getStatus());
         shared_ptr<DBConfig> conf = status.getValue();
 		conf->insertIndexMetadata(txn,bdr.obj());
-		t->InsertDone(0,mongo::DatabaseType::IndexMetaDataNS,RTreeIndex::INSERT,"insertIndexMetadata");
+		t->InsertDone(0,mongo::DatabaseType::IndexMetaDataNS,rtree_index::INSERT,"insertIndexMetadata");
 		Basic_ModifyIndexMeteDataKey(txn,DB_NAME,STORAGE_NAME, Index_INFO_OID);
-		t->UpdateDone(1,mongo::DatabaseType::IndexMetaDataNS,RTreeIndex::UPDATE,"Basic_ModifyIndexMeteDataKey");
+		t->UpdateDone(1,mongo::DatabaseType::IndexMetaDataNS,rtree_index::UPDATE,"Basic_ModifyIndexMeteDataKey");
 		Basic_ModifyIndexType(txn,DB_NAME,STORAGE_NAME, 1);
-		t->UpdateDone(2,mongo::DatabaseType::IndexMetaDataNS,RTreeIndex::UPDATE,"Basic_ModifyIndexType");
+		t->UpdateDone(2,mongo::DatabaseType::IndexMetaDataNS,rtree_index::UPDATE,"Basic_ModifyIndexType");
 		return 1;
 	}
 
@@ -461,7 +461,7 @@ namespace index_manager
 
 		BSONObj GeoObj = oneDoc[COLUMN_NAME].Obj();
 
-		GeoJSONEngine::GeoJSONPaser::VerifyGeoBSONType(GeoObj, returnMBR);
+		geojson_engine::GeoJSONPaser::VerifyGeoBSONType(GeoObj, returnMBR);
 		return true;
 	}
 
@@ -470,7 +470,7 @@ namespace index_manager
 		BSONObj GeoObj = AtomData[COLUMN_NAME].Obj();
 		if (AtomData.hasField(COLUMN_NAME))
 		{
-			GeoJSONEngine::GeoJSONPaser::VerifyGeoBSONType(GeoObj, returnMBR);
+			geojson_engine::GeoJSONPaser::VerifyGeoBSONType(GeoObj, returnMBR);
 			return true;
 		}
 		return false;
@@ -515,7 +515,7 @@ namespace index_manager
 			returnKey = oneDoc["_id"].OID();
 			
 			BSONObj GeoJSONObj = oneDoc[_COLUMN_NAME].Obj();
-			if (GeoJSONEngine::GeoJSONPaser::VerifyGeoBSONType(GeoJSONObj, returnMBR))
+			if (geojson_engine::GeoJSONPaser::VerifyGeoBSONType(GeoJSONObj, returnMBR))
 			{
 				return 1;
 			}

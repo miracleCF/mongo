@@ -156,7 +156,7 @@ namespace geometry_parser
 		return GEOM_INVALID_GEOJSON_FORMAT;
 	}
 
-	int  GeometryParser::MongoGeometryParser::DataType2MutiLineString(BSONObj GeometryData, MultiLineString * &returnMutiLineString)
+	int  geometry_parser::MongoGeometryParser::DataType2MutiLineString(BSONObj GeometryData, MultiLineString * &returnMutiLineString)
 	{
 		if (!GeometryData.hasField("coordinates"))
 		{

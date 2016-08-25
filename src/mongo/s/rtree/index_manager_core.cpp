@@ -110,7 +110,7 @@ namespace index_manager
 
 				mongo::OID Root;
 				_R.InsertRoot(txn,Root);
-				t->InsertDone(3,"rtree_"+COLLECTION_NAME,RTreeIndex::INSERT,"InsertRoot");
+				t->InsertDone(3,"rtree_"+COLLECTION_NAME,rtree_index::INSERT,"InsertRoot");
 
 				IO->Basic_Init_Storage_Traverse(txn,DB_NAME,COLLECTION_NAME);
 				t->UpdateDone(4,"rtree_"+COLLECTION_NAME,rtree_index::UPDATE,"begin building Rtree index on existing data");

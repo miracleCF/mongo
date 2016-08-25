@@ -21,7 +21,7 @@
 namespace mongo
 {
     DBClientBase* myconn;
-    index_manager::MongoIndexManagerIO* pIndexManagerIO = new IndexManager::MongoIndexManagerIO(myconn);
+    index_manager::MongoIndexManagerIO* pIndexManagerIO = new index_manager::MongoIndexManagerIO(myconn);
 	rtree_index::MongoIO* pRTreeIO = new MongoIO(myconn);
 	index_manager::IndexManagerBase IM(pIndexManagerIO, pRTreeIO);
 }

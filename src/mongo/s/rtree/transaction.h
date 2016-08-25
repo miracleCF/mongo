@@ -29,9 +29,9 @@ namespace index_manager{
 	{
 	public:
 		Transaction(std::string name,OperationContext* txn,std::string dbname);		
-		 bool InsertDone(unsigned int sequence,std::string target_collection, RTreeIndex::writeOpt operation_type,std::string info);
-	     bool UpdateDone(unsigned int sequence,std::string target_collection, RTreeIndex::writeOpt operation_type,std::string info);	
-		 bool DeleteDone(unsigned int sequence,std::string target_collection, RTreeIndex::writeOpt operation_type,std::string info);
+		 bool InsertDone(unsigned int sequence,std::string target_collection, rtree_index::writeOpt operation_type,std::string info);
+	     bool UpdateDone(unsigned int sequence,std::string target_collection, rtree_index::writeOpt operation_type,std::string info);	
+		 bool DeleteDone(unsigned int sequence,std::string target_collection, rtree_index::writeOpt operation_type,std::string info);
 		OperationContext* getOperationContext();
 		std::string getDBName();
 	protected:

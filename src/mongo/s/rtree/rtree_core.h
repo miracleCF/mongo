@@ -16,15 +16,15 @@
 *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#pragma  once
+
 
 #include <iostream>
 #include <vector>
 #include "rtree_io.h"
-
+#pragma  once
 using namespace std;
 
-//header from s2 (geos ex)
+
 #include "third_party/s2/Geometry.h"
 #include "third_party/s2/GeometryFactory.h"
 #include "third_party/s2/CoordinateArraySequenceFactory.h"

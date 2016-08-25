@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include "mongo/s/rtree/rtee_data_structure.h"
+#include "mongo/s/rtree/rtree_data_structure.h"
 #include "mongo/s/rtree/index_manager_core.h"
 #include "mongo/s/rtree/geojson_engine.h"
 

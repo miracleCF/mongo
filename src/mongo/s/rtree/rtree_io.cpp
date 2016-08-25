@@ -333,7 +333,7 @@ int nodeInCacheBranchCount = 0;
 						nodeInCacheBranchCount++;
 					}
 				}
-				_Cache->Insert(nodeInCache);//flash一下缓存
+				_Cache->Insert(nodeInCache);//flash cache
 				return nodeInCacheBranchCount;
 			}	
 	        // cout<<"calculate count 1 over"<<endl;
@@ -366,7 +366,7 @@ int nodeInCacheBranchCount = 0;
 			vector<BSONElement> L;
 			AllBranches.elems(L);
 			//�½�һ��Node
-			RTreeIndex::Node theReturnNode(L.size());
+			rtree_index::Node theReturnNode(L.size());
 			theReturnNode.Count = Count;
 			theReturnNode.Level = Level;
 			for (unsigned int i = 0; i < L.size(); i++)
