@@ -25,7 +25,7 @@
 *.jsall
 *.pyc
 *.log
-*.exe
+
 *.exp
 *.lib
 *.idb
