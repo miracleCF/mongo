@@ -1,0 +1,49 @@
+********************************************************************************
+Dear database developper and users in Spatial domain, welcome to use
+MongoDB MapViewer.
+  
+* MongoDB MapViewer is an application with GUI to demonstrate the capabilities 
+  of R-tree powered MongoDB. With this application, users could import, 
+  view and query projected spatial data. 
+ 
+================================================================================
+* MongoDB MapViewer was develolped within Qt creater 5 (Community version), 
+  and in addition, the following three libraries are needed:
+  
+  1. MongoDB legacy CXX driver, used to access MongoDB database.
+     download at: https://github.com/mongodb/mongo-cxx-driver/tree/legacy. 
+    
+  2. Boost libs 1.58.0 or higher, which is depent by MongoDB driver.
+     Download: https://sourceforge.net/projects/boost/files/boost/
+
+  3. GDAL, used to read shape files.
+     Download at: http://www.gdal.org/
+
+  Then, the project file, i.e. "./Source Code/mongoView.pro", should be 
+  configured to set libs and heads to include the above three libraries.
+  
+  Note: MongoDB master CXX driver (https://github.com/mongodb/mongo-cxx-driver/tree/master)
+  also works for MongoDB MapViewer
+
+=================================================================================
+* Compile history: 
+  
+  OS           Version     Status   
+  Window 10    64 Bit      Pass
+  Ubuntu 16.04 64 Bit      Pass
+  
+  Since Qt is a cross-platform UI framework,Other OS may work but not tested.
+  If you are interested, please try it and tell us the results.
+  
+==================================================================================
+* Use binary directly
+
+  Too complicated? directly try pre-compiled binary, which is available here, 
+  for both Window and Ubuntu. Check it out in "./precompiled binaries/[you OS]"
+  You can run the windows version directly, but the Ubuntu version requires 
+  additional libs (*.so) installed in your system
+
+==================================================================================
+How to use MongoDB MapViewer?
+
+Reference the document titled "MongoDB MapViewer User Guide.docx.doc" for detailed description.
